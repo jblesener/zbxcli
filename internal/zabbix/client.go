@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -218,4 +219,82 @@ func (c *Client) DeleteToken(ctx context.Context, session, id string) error {
 func (c *Client) Logout(ctx context.Context, session string) error {
 	_, err := c.call(ctx, "user.logout", []any{}, session)
 	return err
+}
+
+type HostQuery struct {
+	Search string
+	Limit  int
+}
+
+type ResourceQuery struct {
+	Params map[string]any
+	Limit  int
+}
+
+var dataCollectionMethods = map[string]string{
+	"host":              "host.get",
+	"host-group":        "hostgroup.get",
+	"host-interface":    "hostinterface.get",
+	"template":          "template.get",
+	"item":              "item.get",
+	"trigger":           "trigger.get",
+	"graph":             "graph.get",
+	"discovery-rule":    "discoveryrule.get",
+	"item-prototype":    "itemprototype.get",
+	"trigger-prototype": "triggerprototype.get",
+	"graph-prototype":   "graphprototype.get",
+	"host-prototype":    "hostprototype.get",
+	"web-scenario":      "httptest.get",
+}
+
+// ResourceNames returns the supported read-only data-collection resources.
+func ResourceNames() []string {
+	names := make([]string, 0, len(dataCollectionMethods))
+	for name := range dataCollectionMethods {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// GetResource retrieves a supported data-collection resource. Params are
+// resource-specific Zabbix API get parameters; output and limit are managed by
+// this client to keep the command's output and pagination behavior consistent.
+func (c *Client) GetResource(ctx context.Context, token, resource string, query ResourceQuery) (json.RawMessage, error) {
+	method, ok := dataCollectionMethods[strings.ToLower(strings.TrimSpace(resource))]
+	if !ok {
+		return nil, fmt.Errorf("unsupported resource %q; supported resources: %s", resource, strings.Join(ResourceNames(), ", "))
+	}
+	if query.Limit <= 0 {
+		return nil, errors.New("resource query limit must be positive")
+	}
+	params := make(map[string]any, len(query.Params)+2)
+	for key, value := range query.Params {
+		if key == "output" || key == "limit" {
+			return nil, fmt.Errorf("resource query parameter %q is managed by the CLI", key)
+		}
+		params[key] = value
+	}
+	params["output"] = "extend"
+	params["limit"] = query.Limit
+	return c.call(ctx, method, params, token)
+}
+
+// GetHosts retrieves hosts visible to token. It returns the API result unchanged
+// so callers that need scripting output do not lose Zabbix-specific fields.
+func (c *Client) GetHosts(ctx context.Context, token string, query HostQuery) (json.RawMessage, error) {
+	if query.Limit <= 0 {
+		return nil, errors.New("host query limit must be positive")
+	}
+	params := map[string]any{
+		"output":    "extend",
+		"sortfield": "name",
+		"sortorder": "ASC",
+		"limit":     query.Limit,
+	}
+	if search := strings.TrimSpace(query.Search); search != "" {
+		params["search"] = map[string]string{"host": search, "name": search}
+		params["searchByAny"] = true
+	}
+	return c.call(ctx, "host.get", params, token)
 }
