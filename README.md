@@ -2,6 +2,12 @@
 
 `zbxcli` is a command-line client for Zabbix. Its first feature creates and securely stores an API token for a Zabbix user.
 
+## Development
+
+Commits follow the [Conventional Commits](https://www.conventionalcommits.org/) format. Install the Node development tools with `npm install` to enable the local commit-message hook. For example, use `feat: add host search` for a feature or `fix: handle expired tokens` for a bug fix.
+
+Merges to `main` are released automatically: `feat` commits produce minor releases, `fix` and `perf` commits produce patch releases, and breaking changes produce major releases. Other valid commit types do not create a release.
+
 ## Authenticate
 
 ```sh

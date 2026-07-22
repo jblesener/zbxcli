@@ -5,13 +5,37 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
 
 permissions:
   contents: read
 
 jobs:
+  commitlint:
+    name: Validate commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Lint pushed commits
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            npx commitlint --from "$PR_BASE" --to "$PR_HEAD" --verbose
+          else
+            npx commitlint --from "$PUSH_BEFORE" --to "$PUSH_AFTER" --verbose
+          fi
+
   validate:
     name: Test and build
     runs-on: ubuntu-latest
@@ -23,69 +47,28 @@ jobs:
       - run: go test ./...
       - run: go build ./...
 
-  package:
-    name: Package ${{ matrix.name }}
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: validate
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: linux-amd64
-            goos: linux
-            goarch: amd64
-            archive: tar.gz
-          - name: darwin-amd64
-            goos: darwin
-            goarch: amd64
-            archive: tar.gz
-          - name: windows-amd64
-            goos: windows
-            goarch: amd64
-            archive: zip
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Build executable
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: go build -trimpath -o dist/zbxcli${{ matrix.goos == 'windows' && '.exe' || '' }} .
-      - name: Create archive
-        env:
-          VERSION: ${{ github.ref_name }}
-          TARGET: ${{ matrix.name }}
-          ARCHIVE: ${{ matrix.archive }}
-          BINARY: zbxcli${{ matrix.goos == 'windows' && '.exe' || '' }}
-        run: |
-          if [ "$ARCHIVE" = "zip" ]; then
-            (cd dist && zip "zbxcli_${VERSION}_${TARGET}.zip" "$BINARY")
-          else
-            tar -C dist -czf "dist/zbxcli_${VERSION}_${TARGET}.tar.gz" "$BINARY"
-          fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ matrix.name }}
-          path: dist/zbxcli_${{ github.ref_name }}_${{ matrix.name }}.${{ matrix.archive }}
-          if-no-files-found: error
-
   release:
-    name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
+    name: Publish semantic release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - commitlint
+      - validate
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          pattern: release-*
-          path: dist
-          merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
         with:
-          generate_release_notes: true
-          files: dist/*
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run release
