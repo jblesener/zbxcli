@@ -221,11 +221,6 @@ func (c *Client) Logout(ctx context.Context, session string) error {
 	return err
 }
 
-type HostQuery struct {
-	Search string
-	Limit  int
-}
-
 type ResourceQuery struct {
 	Params map[string]any
 	Limit  int
@@ -278,23 +273,4 @@ func (c *Client) GetResource(ctx context.Context, token, resource string, query 
 	params["output"] = "extend"
 	params["limit"] = query.Limit
 	return c.call(ctx, method, params, token)
-}
-
-// GetHosts retrieves hosts visible to token. It returns the API result unchanged
-// so callers that need scripting output do not lose Zabbix-specific fields.
-func (c *Client) GetHosts(ctx context.Context, token string, query HostQuery) (json.RawMessage, error) {
-	if query.Limit <= 0 {
-		return nil, errors.New("host query limit must be positive")
-	}
-	params := map[string]any{
-		"output":    "extend",
-		"sortfield": "name",
-		"sortorder": "ASC",
-		"limit":     query.Limit,
-	}
-	if search := strings.TrimSpace(query.Search); search != "" {
-		params["search"] = map[string]string{"host": search, "name": search}
-		params["searchByAny"] = true
-	}
-	return c.call(ctx, "host.get", params, token)
 }

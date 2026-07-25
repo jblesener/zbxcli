@@ -113,92 +113,6 @@ func TestDiscoverRejectsUnsupportedVersion(t *testing.T) {
 	}
 }
 
-func TestGetHostsUsesSearchAndVersionAppropriateAuthorization(t *testing.T) {
-	for _, tc := range []struct {
-		name, version string
-		bearer        bool
-	}{
-		{name: "6.0 auth property", version: "6.0.0"},
-		{name: "7.2 bearer header", version: "7.2.0", bearer: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var request struct {
-					Method string                     `json:"method"`
-					Params map[string]json.RawMessage `json:"params"`
-					Auth   *string                    `json:"auth"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Fatal(err)
-				}
-				switch request.Method {
-				case "apiinfo.version":
-					_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "result": tc.version, "id": 1})
-				case "host.get":
-					if tc.bearer {
-						if got := r.Header.Get("Authorization"); got != "Bearer token" {
-							t.Fatalf("Authorization = %q", got)
-						}
-						if request.Auth != nil {
-							t.Fatalf("unexpected auth property: %q", *request.Auth)
-						}
-					} else if request.Auth == nil || *request.Auth != "token" {
-						t.Fatalf("auth = %#v", request.Auth)
-					}
-					var search map[string]string
-					if err := json.Unmarshal(request.Params["search"], &search); err != nil {
-						t.Fatal(err)
-					}
-					if got, want := search, map[string]string{"host": "web", "name": "web"}; !equalStringMaps(got, want) {
-						t.Fatalf("search = %#v, want %#v", got, want)
-					}
-					var limit int
-					if err := json.Unmarshal(request.Params["limit"], &limit); err != nil || limit != 7 {
-						t.Fatalf("limit = %d, err = %v", limit, err)
-					}
-					var output, sortField, sortOrder string
-					_ = json.Unmarshal(request.Params["output"], &output)
-					_ = json.Unmarshal(request.Params["sortfield"], &sortField)
-					_ = json.Unmarshal(request.Params["sortorder"], &sortOrder)
-					if output != "extend" || sortField != "name" || sortOrder != "ASC" {
-						t.Fatalf("output=%q sortfield=%q sortorder=%q", output, sortField, sortOrder)
-					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "result": []map[string]string{{"hostid": "42", "host": "web-01", "name": "Web 01", "status": "0", "custom": "value"}}, "id": 1})
-				default:
-					t.Fatalf("unexpected method %q", request.Method)
-				}
-			}))
-			defer server.Close()
-
-			client, err := New(server.URL, false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := client.Discover(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			raw, err := client.GetHosts(context.Background(), "token", HostQuery{Search: " web ", Limit: 7})
-			if err != nil {
-				t.Fatal(err)
-			}
-			var hosts []map[string]string
-			if err := json.Unmarshal(raw, &hosts); err != nil {
-				t.Fatal(err)
-			}
-			if len(hosts) != 1 || hosts[0]["custom"] != "value" {
-				t.Fatalf("raw hosts = %#v", hosts)
-			}
-		})
-	}
-}
-
-func TestGetHostsRejectsNonPositiveLimit(t *testing.T) {
-	client := &Client{}
-	if _, err := client.GetHosts(context.Background(), "token", HostQuery{}); err == nil || err.Error() != "host query limit must be positive" {
-		t.Fatalf("GetHosts error = %v", err)
-	}
-}
-
 func TestGetResourceUsesRegisteredMethodAndPreservesParams(t *testing.T) {
 	expected := map[string]string{
 		"host": "host.get", "host-group": "hostgroup.get", "host-interface": "hostinterface.get",
@@ -325,16 +239,4 @@ func TestGetResourceUsesVersionAppropriateAuthorization(t *testing.T) {
 			}
 		})
 	}
-}
-
-func equalStringMaps(got, want map[string]string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for key, wantValue := range want {
-		if got[key] != wantValue {
-			return false
-		}
-	}
-	return true
 }

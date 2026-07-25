@@ -14,28 +14,33 @@ import (
 const defaultQueryLimit = 100
 
 func newGetCmd(deps Dependencies) *cobra.Command {
-	var profileName, params string
+	var profileName, params, output string
 	var limit int
 	var insecure bool
 	cmd := &cobra.Command{
-		Use:   "get <resource>",
+		Use:   "get <resource> [query]",
 		Short: "Query a Zabbix data-collection resource",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runGet(cmd, deps, getOptions{profile: profileName, resource: args[0], params: params, limit: limit, insecure: insecure})
+			query := ""
+			if len(args) == 2 {
+				query = args[1]
+			}
+			return runGet(cmd, deps, getOptions{profile: profileName, resource: args[0], query: query, params: params, limit: limit, output: output, insecure: insecure})
 		},
 	}
 	cmd.Flags().StringVar(&profileName, "profile", "default", "Profile name")
 	cmd.Flags().IntVar(&limit, "limit", defaultQueryLimit, "Maximum number of records to return")
 	cmd.Flags().StringVar(&params, "params", "{}", "JSON object of resource-specific Zabbix API get parameters")
+	cmd.Flags().StringVar(&output, "output", "table", "Output format: table or json")
 	cmd.Flags().BoolVar(&insecure, "insecure-skip-tls-verify", false, "Disable TLS certificate verification")
 	return cmd
 }
 
 type getOptions struct {
-	profile, resource, params string
-	limit                     int
-	insecure                  bool
+	profile, resource, query, params, output string
+	limit                                    int
+	insecure                                 bool
 }
 
 func runGet(cmd *cobra.Command, deps Dependencies, opts getOptions) error {
@@ -46,15 +51,37 @@ func runGet(cmd *cobra.Command, deps Dependencies, opts getOptions) error {
 	if err != nil {
 		return err
 	}
+	resource := strings.ToLower(strings.TrimSpace(opts.resource))
+	opts.query = strings.TrimSpace(opts.query)
+	if opts.query != "" {
+		if resource != "host" {
+			return errors.New("an optional query is supported only for the host resource")
+		}
+		if _, ok := params["search"]; ok {
+			return errors.New("--params must not include \"search\" when a host query is provided")
+		}
+		if _, ok := params["searchByAny"]; ok {
+			return errors.New("--params must not include \"searchByAny\" when a host query is provided")
+		}
+		params["search"] = map[string]string{"host": opts.query, "name": opts.query}
+		params["searchByAny"] = true
+	}
+	opts.output = strings.ToLower(strings.TrimSpace(opts.output))
+	if opts.output != "table" && opts.output != "json" {
+		return fmt.Errorf("unsupported --output %q; use table or json", opts.output)
+	}
 	api, token, err := profileAPI(cmd, deps, opts.profile, opts.insecure, "query")
 	if err != nil {
 		return err
 	}
-	raw, err := api.GetResource(cmd.Context(), token, opts.resource, zabbix.ResourceQuery{Params: params, Limit: opts.limit})
+	raw, err := api.GetResource(cmd.Context(), token, resource, zabbix.ResourceQuery{Params: params, Limit: opts.limit})
 	if err != nil {
 		return err
 	}
-	return writeJSON(cmd, raw)
+	if opts.output == "json" {
+		return writeJSON(cmd, raw)
+	}
+	return writeResourceTable(cmd, resource, raw)
 }
 
 func parseResourceParams(raw string) (map[string]any, error) {
