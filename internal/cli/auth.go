@@ -18,8 +18,46 @@ import (
 
 func newAuthCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{Use: "auth", Short: "Manage Zabbix authentication"}
-	cmd.AddCommand(newLoginCmd(deps))
+	cmd.AddCommand(newLoginCmd(deps), newTokenCmd(deps))
 	return cmd
+}
+
+func newTokenCmd(deps Dependencies) *cobra.Command {
+	token := &cobra.Command{Use: "token", Short: "Manage saved API tokens"}
+	var profileName string
+	show := &cobra.Command{
+		Use:   "show",
+		Short: "Write a saved API token to standard output",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runTokenShow(cmd, deps, profileName)
+		},
+	}
+	show.Flags().StringVar(&profileName, "profile", "default", "Profile name")
+	token.AddCommand(show)
+	return token
+}
+
+func runTokenShow(cmd *cobra.Command, deps Dependencies, profileName string) error {
+	if deps.Store == nil || deps.Store.Secrets == nil {
+		return errors.New("zbxcli token dependencies are not configured")
+	}
+	if err := profile.ValidateName(profileName); err != nil {
+		return err
+	}
+	cfg, err := deps.Store.Load()
+	if err != nil {
+		return err
+	}
+	if _, ok := cfg.Profiles[profileName]; !ok {
+		return fmt.Errorf("profile %q is not configured; run zbxcli auth login --profile %s", profileName, profileName)
+	}
+	token, err := deps.Store.Secrets.Get(profileName)
+	if err != nil {
+		return fmt.Errorf("load API token for profile %q: %w", profileName, err)
+	}
+	_, err = fmt.Fprintln(cmd.OutOrStdout(), token)
+	return err
 }
 
 func newLoginCmd(deps Dependencies) *cobra.Command {

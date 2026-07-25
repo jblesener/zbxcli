@@ -24,6 +24,14 @@ zbxcli auth login --profile production --url https://zabbix.example --username A
 
 `--show-token` prints the newly generated token to standard output. Treat that output as a secret. API tokens expire after 90 days by default; use `--expires-in never` only when your token policy permits it.
 
+To write a saved token for use in a script, run:
+
+```sh
+zbxcli auth token show --profile production
+```
+
+This command writes only the token and a trailing newline to standard output. Treat its output as a secret.
+
 Zabbix 6.0 and newer are supported. TLS certificates are verified by default; `--insecure-skip-tls-verify` is available only for deliberate testing or private deployments.
 
 ## Query data-collection resources

@@ -101,4 +101,58 @@ func TestParseExpiry(t *testing.T) {
 	}
 }
 
+func TestTokenShowWritesSelectedToken(t *testing.T) {
+	secrets := &memorySecrets{values: map[string]string{"production": "production-secret"}}
+	store := &profile.Store{Path: filepath.Join(t.TempDir(), "profiles.json"), Secrets: secrets}
+	if err := store.Save(profile.Config{Profiles: map[string]profile.Profile{"production": {URL: "https://zabbix.example"}}}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := NewRootCmd(Dependencies{Store: store})
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"auth", "token", "show", "--profile", "production"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "production-secret\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	if got := errOut.String(); got != "" {
+		t.Fatalf("stderr = %q", got)
+	}
+}
+
+func TestTokenShowRejectsMissingProfileAndToken(t *testing.T) {
+	t.Run("profile", func(t *testing.T) {
+		store := &profile.Store{Path: filepath.Join(t.TempDir(), "profiles.json"), Secrets: &memorySecrets{values: map[string]string{}}}
+		cmd := NewRootCmd(Dependencies{Store: store})
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetArgs([]string{"auth", "token", "show"})
+		if err := cmd.Execute(); err == nil {
+			t.Fatal("auth token show succeeded for missing profile")
+		}
+		if got := out.String(); got != "" {
+			t.Fatalf("stdout = %q", got)
+		}
+	})
+	t.Run("token", func(t *testing.T) {
+		store := &profile.Store{Path: filepath.Join(t.TempDir(), "profiles.json"), Secrets: &memorySecrets{values: map[string]string{}}}
+		if err := store.Save(profile.Config{Profiles: map[string]profile.Profile{"default": {URL: "https://zabbix.example"}}}); err != nil {
+			t.Fatal(err)
+		}
+		cmd := NewRootCmd(Dependencies{Store: store})
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetArgs([]string{"auth", "token", "show"})
+		if err := cmd.Execute(); err == nil {
+			t.Fatal("auth token show succeeded for missing token")
+		}
+		if got := out.String(); got != "" {
+			t.Fatalf("stdout = %q", got)
+		}
+	})
+}
+
 func now() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
