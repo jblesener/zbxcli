@@ -49,3 +49,8 @@ zbxcli get item --profile production --output json
 ```
 
 Pass model-specific Zabbix API parameters in `--params` as a JSON object. `zbxcli` always requests complete records and limits results to 100 by default; use `--limit` to change that. The `output` and `limit` API parameters are managed by the command and must not appear in `--params`. When using the host query shortcut, do not also set `search` or `searchByAny` in `--params`.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+Copyright © 2026 John Blesener.
