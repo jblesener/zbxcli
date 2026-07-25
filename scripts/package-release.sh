@@ -34,4 +34,5 @@ package_target() {
 
 package_target linux amd64 linux-amd64 tar.gz
 package_target darwin amd64 darwin-amd64 tar.gz
+package_target darwin arm64 darwin-arm64 tar.gz
 package_target windows amd64 windows-amd64 zip
