@@ -70,5 +70,8 @@ jobs:
       - run: npm ci
       - name: Create GitHub release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Events created with the ephemeral GITHUB_TOKEN do not trigger other
+          # workflows. Use the tap PAT so the published release starts the
+          # Homebrew update workflow.
+          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: npm run release
