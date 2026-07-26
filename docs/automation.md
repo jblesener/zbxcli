@@ -24,4 +24,4 @@ Only `auth login --show-token` and `auth token show` intentionally write a token
 
 ## Preserve TLS verification
 
-Keep TLS verification enabled for routine operation. If a private test deployment requires `--insecure-skip-tls-verify`, scope it to that command and profile rather than making it a default in automation.
+Routine profile commands require the certificate thumbprint saved at login. For a self-signed/private endpoint, bootstrap that pin once with `zbxcli auth login --insecure-skip-tls-verify`; do not place that flag in automation. Replace a certificate only through an intentional `auth login --trust-new-certificate` operation.

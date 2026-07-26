@@ -3,6 +3,8 @@ package zabbix
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,13 +15,24 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Client struct {
-	endpoint string
-	http     *http.Client
-	version  Version
+	endpoint      string
+	http          *http.Client
+	version       Version
+	tlsMu         sync.Mutex
+	tlsThumbprint string
+}
+
+// TLSOptions controls trust for HTTPS endpoints. A thumbprint pins the leaf
+// certificate and replaces normal CA verification; InsecureSkipVerify is only
+// appropriate while establishing a new pin for a trusted private endpoint.
+type TLSOptions struct {
+	Thumbprint         string
+	InsecureSkipVerify bool
 }
 
 type Version struct {
@@ -66,14 +79,64 @@ func NormalizeEndpoint(raw string) (string, error) {
 	return u.String(), nil
 }
 
-func New(endpoint string, insecure bool) (*Client, error) {
+func New(endpoint string, tlsOptions TLSOptions) (*Client, error) {
 	endpoint, err := NormalizeEndpoint(endpoint)
 	if err != nil {
 		return nil, err
 	}
+	pinned, err := normalizeThumbprint(tlsOptions.Thumbprint)
+	if err != nil {
+		return nil, err
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig.InsecureSkipVerify = insecure // #nosec G402 -- supplied only by explicit CLI flag.
-	return &Client{endpoint: endpoint, http: &http.Client{Transport: transport, Timeout: 30 * time.Second}}, nil
+	client := &Client{endpoint: endpoint, http: &http.Client{Transport: transport, Timeout: 30 * time.Second}}
+	if pinned != "" || tlsOptions.InsecureSkipVerify {
+		transport.TLSClientConfig.InsecureSkipVerify = true // #nosec G402 -- a saved pin or explicit bootstrap verifies the peer below.
+	}
+	transport.TLSClientConfig.VerifyConnection = func(state tls.ConnectionState) error {
+		if len(state.PeerCertificates) == 0 {
+			return errors.New("TLS peer presented no certificates")
+		}
+		observed := certificateThumbprint(state.PeerCertificates[0].Raw)
+		if pinned != "" && observed != pinned {
+			return fmt.Errorf("TLS certificate thumbprint mismatch: got %s, want %s", observed, pinned)
+		}
+		client.tlsMu.Lock()
+		client.tlsThumbprint = observed
+		client.tlsMu.Unlock()
+		return nil
+	}
+	return client, nil
+}
+
+func normalizeThumbprint(raw string) (string, error) {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" {
+		return "", nil
+	}
+	const prefix = "sha256:"
+	if !strings.HasPrefix(raw, prefix) || len(raw) != len(prefix)+sha256.Size*2 {
+		return "", fmt.Errorf("invalid TLS certificate thumbprint %q", raw)
+	}
+	for _, r := range raw[len(prefix):] {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return "", fmt.Errorf("invalid TLS certificate thumbprint %q", raw)
+		}
+	}
+	return raw, nil
+}
+
+func certificateThumbprint(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return fmt.Sprintf("sha256:%x", sum)
+}
+
+// TLSThumbprint returns the leaf certificate fingerprint observed during a
+// successful HTTPS connection, or an empty string for HTTP connections.
+func (c *Client) TLSThumbprint() string {
+	c.tlsMu.Lock()
+	defer c.tlsMu.Unlock()
+	return c.tlsThumbprint
 }
 
 type rpcRequest struct {

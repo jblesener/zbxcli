@@ -72,7 +72,7 @@ zbxcli auth remove production --yes
 If remote revocation fails, zbxcli leaves the local profile and token in place
 so the operation can be retried.
 
-Zabbix 6.0 and newer are supported. TLS certificates are verified by default; `--insecure-skip-tls-verify` is available only for deliberate testing or private deployments.
+Zabbix 6.0 and newer are supported. HTTPS profiles pin the SHA-256 thumbprint of the leaf certificate after their first successful login. For a self-signed or private certificate, use `auth login --insecure-skip-tls-verify` once to bootstrap that pin; later commands require the saved certificate. If an administrator replaces the certificate, rerun login with `--trust-new-certificate` (and, for an untrusted replacement, `--insecure-skip-tls-verify`).
 
 ## Query data-collection resources
 

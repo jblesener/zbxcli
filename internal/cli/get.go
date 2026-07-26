@@ -16,7 +16,6 @@ const defaultQueryLimit = 100
 func newGetCmd(deps Dependencies) *cobra.Command {
 	var profileName, params, output string
 	var limit int
-	var insecure bool
 	cmd := &cobra.Command{
 		Use:   "get <resource> [query]",
 		Short: "Query a Zabbix data-collection resource",
@@ -26,21 +25,19 @@ func newGetCmd(deps Dependencies) *cobra.Command {
 			if len(args) == 2 {
 				query = args[1]
 			}
-			return runGet(cmd, deps, getOptions{profile: profileName, resource: args[0], query: query, params: params, limit: limit, output: output, insecure: insecure})
+			return runGet(cmd, deps, getOptions{profile: profileName, resource: args[0], query: query, params: params, limit: limit, output: output})
 		},
 	}
 	cmd.Flags().StringVar(&profileName, "profile", "default", "Profile name")
 	cmd.Flags().IntVar(&limit, "limit", defaultQueryLimit, "Maximum number of records to return")
 	cmd.Flags().StringVar(&params, "params", "{}", "JSON object of resource-specific Zabbix API get parameters")
 	cmd.Flags().StringVar(&output, "output", "table", "Output format: table or json")
-	cmd.Flags().BoolVar(&insecure, "insecure-skip-tls-verify", false, "Disable TLS certificate verification")
 	return cmd
 }
 
 type getOptions struct {
 	profile, resource, query, params, output string
 	limit                                    int
-	insecure                                 bool
 }
 
 func runGet(cmd *cobra.Command, deps Dependencies, opts getOptions) error {
@@ -70,7 +67,7 @@ func runGet(cmd *cobra.Command, deps Dependencies, opts getOptions) error {
 	if opts.output != "table" && opts.output != "json" {
 		return fmt.Errorf("unsupported --output %q; use table or json", opts.output)
 	}
-	api, token, err := profileAPI(cmd, deps, opts.profile, opts.insecure, "query")
+	api, token, err := profileAPI(cmd, deps, opts.profile, "query")
 	if err != nil {
 		return err
 	}
@@ -100,7 +97,7 @@ func parseResourceParams(raw string) (map[string]any, error) {
 	return params, nil
 }
 
-func profileAPI(cmd *cobra.Command, deps Dependencies, profileName string, insecure bool, action string) (*zabbix.Client, string, error) {
+func profileAPI(cmd *cobra.Command, deps Dependencies, profileName, action string) (*zabbix.Client, string, error) {
 	if deps.Store == nil || deps.Store.Secrets == nil {
 		return nil, "", fmt.Errorf("zbxcli %s dependencies are not configured", action)
 	}
@@ -119,12 +116,19 @@ func profileAPI(cmd *cobra.Command, deps Dependencies, profileName string, insec
 	if err != nil {
 		return nil, "", fmt.Errorf("load API token for profile %q: %w", profileName, err)
 	}
-	api, err := zabbix.New(connection.URL, insecure)
+	api, err := zabbix.New(connection.URL, zabbix.TLSOptions{Thumbprint: connection.TLSThumbprint})
 	if err != nil {
 		return nil, "", err
 	}
 	if _, err := api.Discover(cmd.Context()); err != nil {
 		return nil, "", err
+	}
+	if connection.TLSThumbprint == "" && api.TLSThumbprint() != "" {
+		connection.TLSThumbprint = api.TLSThumbprint()
+		cfg.Profiles[profileName] = connection
+		if err := deps.Store.Save(cfg); err != nil {
+			return nil, "", fmt.Errorf("save TLS certificate thumbprint for profile %q: %w", profileName, err)
+		}
 	}
 	return api, token, nil
 }

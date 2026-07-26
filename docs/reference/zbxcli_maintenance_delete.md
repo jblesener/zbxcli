@@ -14,10 +14,9 @@ zbxcli maintenance delete <maintenance-id> [maintenance-id...] [flags]
 ### Options
 
 ```
-  -h, --help                       help for delete
-      --insecure-skip-tls-verify   Disable TLS certificate verification
-      --profile string             Profile name (default "default")
-      --yes                        Skip the confirmation prompt
+  -h, --help             help for delete
+      --profile string   Profile name (default "default")
+      --yes              Skip the confirmation prompt
 ```
 
 ### SEE ALSO

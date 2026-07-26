@@ -62,12 +62,12 @@ func runTokenShow(cmd *cobra.Command, deps Dependencies, profileName string) err
 
 func newLoginCmd(deps Dependencies) *cobra.Command {
 	var endpoint, username, profileName, expiresIn, tokenName string
-	var showToken, insecure bool
+	var showToken, insecure, trustNewCertificate bool
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Create and store a Zabbix API token",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLogin(cmd, deps, loginOptions{endpoint: endpoint, username: username, profile: profileName, expiresIn: expiresIn, tokenName: tokenName, showToken: showToken, insecure: insecure})
+			return runLogin(cmd, deps, loginOptions{endpoint: endpoint, username: username, profile: profileName, expiresIn: expiresIn, tokenName: tokenName, showToken: showToken, insecure: insecure, trustNewCertificate: trustNewCertificate})
 		},
 	}
 	cmd.Flags().StringVar(&endpoint, "url", "", "Zabbix frontend or API URL")
@@ -76,13 +76,14 @@ func newLoginCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().StringVar(&expiresIn, "expires-in", "90d", "Token lifetime (for example 90d, 24h, or never)")
 	cmd.Flags().StringVar(&tokenName, "token-name", "", "Name for the Zabbix API token")
 	cmd.Flags().BoolVar(&showToken, "show-token", false, "Print the generated token to stdout")
-	cmd.Flags().BoolVar(&insecure, "insecure-skip-tls-verify", false, "Disable TLS certificate verification")
+	cmd.Flags().BoolVar(&insecure, "insecure-skip-tls-verify", false, "Bootstrap trust for an unverified TLS certificate")
+	cmd.Flags().BoolVar(&trustNewCertificate, "trust-new-certificate", false, "Replace this profile's saved TLS certificate thumbprint")
 	return cmd
 }
 
 type loginOptions struct {
 	endpoint, username, profile, expiresIn, tokenName string
-	showToken, insecure                               bool
+	showToken, insecure, trustNewCertificate          bool
 	rotate                                            bool
 }
 
@@ -114,7 +115,11 @@ func runLogin(cmd *cobra.Command, deps Dependencies, opts loginOptions) error {
 	if err != nil {
 		return err
 	}
-	api, err := zabbix.New(opts.endpoint, opts.insecure)
+	tlsOptions, err := loginTLSOptions(deps.Store, opts.profile, opts.insecure, opts.trustNewCertificate)
+	if err != nil {
+		return err
+	}
+	api, err := zabbix.New(opts.endpoint, tlsOptions)
 	if err != nil {
 		return err
 	}
@@ -149,7 +154,7 @@ func runLogin(cmd *cobra.Command, deps Dependencies, opts loginOptions) error {
 		return err
 	}
 	endpoint, _ := zabbix.NormalizeEndpoint(opts.endpoint)
-	previousTokenID, err := persistProfile(deps.Store, opts.profile, profile.Profile{URL: endpoint, Username: opts.username, APIVersion: version.Raw, TokenID: issued.ID, ExpiresAt: issued.ExpiresAt}, issued.Value)
+	previousTokenID, err := persistProfile(deps.Store, opts.profile, profile.Profile{URL: endpoint, Username: opts.username, APIVersion: version.Raw, TokenID: issued.ID, ExpiresAt: issued.ExpiresAt, TLSThumbprint: api.TLSThumbprint()}, issued.Value)
 	if err != nil {
 		cleanupToken(cmd, api, session, issued.ID)
 		return err
@@ -169,6 +174,27 @@ func runLogin(cmd *cobra.Command, deps Dependencies, opts loginOptions) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s profile %q against Zabbix API %s.\n", verb, opts.profile, version.Raw)
 	}
 	return nil
+}
+
+func loginTLSOptions(store *profile.Store, name string, insecure, trustNewCertificate bool) (zabbix.TLSOptions, error) {
+	cfg, err := store.Load()
+	if err != nil {
+		return zabbix.TLSOptions{}, err
+	}
+	connection, exists := cfg.Profiles[name]
+	if trustNewCertificate {
+		if !exists || connection.TLSThumbprint == "" {
+			return zabbix.TLSOptions{}, errors.New("--trust-new-certificate requires an existing profile with a saved TLS certificate thumbprint")
+		}
+		return zabbix.TLSOptions{InsecureSkipVerify: insecure}, nil
+	}
+	if connection.TLSThumbprint != "" {
+		if insecure {
+			return zabbix.TLSOptions{}, errors.New("--insecure-skip-tls-verify can only bootstrap a profile without a saved TLS certificate thumbprint; use --trust-new-certificate to replace it")
+		}
+		return zabbix.TLSOptions{Thumbprint: connection.TLSThumbprint}, nil
+	}
+	return zabbix.TLSOptions{InsecureSkipVerify: insecure}, nil
 }
 
 func cleanupToken(cmd *cobra.Command, api *zabbix.Client, session, id string) {

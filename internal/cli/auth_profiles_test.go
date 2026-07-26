@@ -19,7 +19,7 @@ func TestProfileListWritesSortedMetadata(t *testing.T) {
 	future := time.Now().Add(time.Hour)
 	store := &profile.Store{Path: filepath.Join(t.TempDir(), "profiles.json"), Secrets: &memorySecrets{values: map[string]string{}}}
 	if err := store.Save(profile.Config{Profiles: map[string]profile.Profile{
-		"zulu":  {URL: "https://z.example", Username: "Zed", APIVersion: "7.2.0", TokenID: "3"},
+		"zulu":  {URL: "https://z.example", Username: "Zed", APIVersion: "7.2.0", TokenID: "3", TLSThumbprint: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
 		"alpha": {URL: "https://a.example", Username: "Ada", APIVersion: "6.0.0", TokenID: "1", ExpiresAt: &past},
 		"beta":  {URL: "https://b.example", Username: "Bea", APIVersion: "7.0.0", TokenID: "2", ExpiresAt: &future},
 	}}); err != nil {
@@ -49,7 +49,7 @@ func TestProfileListWritesSortedMetadata(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &summaries); err != nil {
 		t.Fatal(err)
 	}
-	if len(summaries) != 3 || summaries[0].Name != "alpha" || summaries[0].ExpiryStatus != "expired" || summaries[1].ExpiryStatus != "active" || summaries[2].ExpiryStatus != "never" {
+	if len(summaries) != 3 || summaries[0].Name != "alpha" || summaries[0].ExpiryStatus != "expired" || summaries[1].ExpiryStatus != "active" || summaries[2].ExpiryStatus != "never" || summaries[2].TLSThumbprint == "" {
 		t.Fatalf("summaries = %#v", summaries)
 	}
 }

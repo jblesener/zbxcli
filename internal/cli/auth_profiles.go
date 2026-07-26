@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jblesener/zbxcli/internal/profile"
-	"github.com/jblesener/zbxcli/internal/zabbix"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -37,13 +36,14 @@ func newProfileListCmd(deps Dependencies) *cobra.Command {
 }
 
 type profileSummary struct {
-	Name         string     `json:"name"`
-	URL          string     `json:"url"`
-	Username     string     `json:"username,omitempty"`
-	APIVersion   string     `json:"api_version"`
-	TokenID      string     `json:"token_id"`
-	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
-	ExpiryStatus string     `json:"expiry_status"`
+	Name          string     `json:"name"`
+	URL           string     `json:"url"`
+	Username      string     `json:"username,omitempty"`
+	APIVersion    string     `json:"api_version"`
+	TokenID       string     `json:"token_id"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	ExpiryStatus  string     `json:"expiry_status"`
+	TLSThumbprint string     `json:"tls_thumbprint,omitempty"`
 }
 
 func runProfileList(cmd *cobra.Command, deps Dependencies, opts profileListOptions) error {
@@ -76,7 +76,7 @@ func profileSummaries(cfg profile.Config, now time.Time) []profileSummary {
 		connection := cfg.Profiles[name]
 		summaries = append(summaries, profileSummary{
 			Name: name, URL: connection.URL, Username: connection.Username, APIVersion: connection.APIVersion,
-			TokenID: connection.TokenID, ExpiresAt: connection.ExpiresAt, ExpiryStatus: profileExpiryStatus(connection.ExpiresAt, now),
+			TokenID: connection.TokenID, ExpiresAt: connection.ExpiresAt, ExpiryStatus: profileExpiryStatus(connection.ExpiresAt, now), TLSThumbprint: connection.TLSThumbprint,
 		})
 	}
 	return summaries
@@ -94,7 +94,7 @@ func profileExpiryStatus(expiresAt *time.Time, now time.Time) string {
 
 func writeProfileTable(cmd *cobra.Command, summaries []profileSummary) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "PROFILE\tURL\tUSERNAME\tAPI VERSION\tEXPIRES\tSTATUS"); err != nil {
+	if _, err := fmt.Fprintln(w, "PROFILE\tURL\tUSERNAME\tAPI VERSION\tEXPIRES\tSTATUS\tTLS THUMBPRINT"); err != nil {
 		return err
 	}
 	for _, summary := range summaries {
@@ -102,7 +102,7 @@ func writeProfileTable(cmd *cobra.Command, summaries []profileSummary) error {
 		if summary.ExpiresAt != nil {
 			expires = summary.ExpiresAt.Format(time.RFC3339)
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", summary.Name, summary.URL, summary.Username, summary.APIVersion, expires, summary.ExpiryStatus); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", summary.Name, summary.URL, summary.Username, summary.APIVersion, expires, summary.ExpiryStatus, summary.TLSThumbprint); err != nil {
 			return err
 		}
 	}
@@ -111,7 +111,7 @@ func writeProfileTable(cmd *cobra.Command, summaries []profileSummary) error {
 
 type rotateOptions struct {
 	username, profile, expiresIn, tokenName string
-	showToken, insecure                     bool
+	showToken                               bool
 }
 
 func newRotateCmd(deps Dependencies) *cobra.Command {
@@ -127,7 +127,6 @@ func newRotateCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().StringVar(&opts.expiresIn, "expires-in", "90d", "Token lifetime (for example 90d, 24h, or never)")
 	cmd.Flags().StringVar(&opts.tokenName, "token-name", "", "Name for the Zabbix API token")
 	cmd.Flags().BoolVar(&opts.showToken, "show-token", false, "Print the generated token to stdout")
-	cmd.Flags().BoolVar(&opts.insecure, "insecure-skip-tls-verify", false, "Disable TLS certificate verification")
 	return cmd
 }
 
@@ -152,12 +151,12 @@ func runRotate(cmd *cobra.Command, deps Dependencies, opts rotateOptions) error 
 	}
 	return runLogin(cmd, deps, loginOptions{
 		endpoint: connection.URL, username: username, profile: opts.profile, expiresIn: opts.expiresIn, tokenName: opts.tokenName,
-		showToken: opts.showToken, insecure: opts.insecure, rotate: true,
+		showToken: opts.showToken, rotate: true,
 	})
 }
 
 type removeOptions struct {
-	yes, insecure bool
+	yes bool
 }
 
 func newRemoveCmd(deps Dependencies) *cobra.Command {
@@ -169,7 +168,6 @@ func newRemoveCmd(deps Dependencies) *cobra.Command {
 		RunE:  func(cmd *cobra.Command, args []string) error { return runRemove(cmd, deps, opts, args[0]) },
 	}
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "Skip the confirmation prompt")
-	cmd.Flags().BoolVar(&opts.insecure, "insecure-skip-tls-verify", false, "Disable TLS certificate verification")
 	return cmd
 }
 
@@ -199,11 +197,8 @@ func runRemove(cmd *cobra.Command, deps Dependencies, opts removeOptions, name s
 	if err != nil {
 		return fmt.Errorf("load API token for profile %q: %w", name, err)
 	}
-	api, err := zabbix.New(connection.URL, opts.insecure)
+	api, _, err := profileAPI(cmd, deps, name, "remove profile")
 	if err != nil {
-		return err
-	}
-	if _, err := api.Discover(cmd.Context()); err != nil {
 		return err
 	}
 	if err := api.DeleteToken(cmd.Context(), token, connection.TokenID); err != nil {

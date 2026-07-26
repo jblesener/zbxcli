@@ -59,7 +59,7 @@ func TestTokenWorkflowUsesVersionAppropriateAuthorization(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "result": result, "id": 1})
 			}))
 			defer server.Close()
-			client, err := New(server.URL, false)
+			client, err := New(server.URL, TLSOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +121,7 @@ func TestDeleteTokenUsesVersionAppropriateAuthorization(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, err := New(server.URL, false)
+			client, err := New(server.URL, TLSOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -153,12 +153,55 @@ func TestNormalizeEndpoint(t *testing.T) {
 	}
 }
 
+func TestTLSCertificatePinning(t *testing.T) {
+	versionHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "result": "6.0.0", "id": 1})
+	})
+	server := httptest.NewTLSServer(versionHandler)
+	defer server.Close()
+
+	bootstrap, err := New(server.URL, TLSOptions{InsecureSkipVerify: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bootstrap.Discover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pin := bootstrap.TLSThumbprint()
+	if !strings.HasPrefix(pin, "sha256:") {
+		t.Fatalf("thumbprint = %q", pin)
+	}
+
+	pinned, err := New(server.URL, TLSOptions{Thumbprint: pin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pinned.Discover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	mismatchedPin := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	mismatched, err := New(server.URL, TLSOptions{Thumbprint: mismatchedPin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mismatched.Discover(context.Background()); err == nil || !strings.Contains(err.Error(), "thumbprint mismatch") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestNewRejectsInvalidTLSThumbprint(t *testing.T) {
+	if _, err := New("https://zabbix.example", TLSOptions{Thumbprint: "not-a-thumbprint"}); err == nil || !strings.Contains(err.Error(), "invalid TLS certificate thumbprint") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestDiscoverRejectsUnsupportedVersion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "result": "5.4.0", "id": 1})
 	}))
 	defer server.Close()
-	client, _ := New(server.URL, false)
+	client, _ := New(server.URL, TLSOptions{})
 	if _, err := client.Discover(context.Background()); err == nil {
 		t.Fatal("Discover unexpectedly succeeded")
 	}
@@ -195,7 +238,7 @@ func TestGetResourceUsesRegisteredMethodAndPreservesParams(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, false)
+	client, err := New(server.URL, TLSOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +319,7 @@ func TestGetResourceUsesVersionAppropriateAuthorization(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, err := New(server.URL, false)
+			client, err := New(server.URL, TLSOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -330,7 +373,7 @@ func TestMaintenanceClientUsesExpectedMethodsAndPayload(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, false)
+	client, err := New(server.URL, TLSOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

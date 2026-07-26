@@ -25,13 +25,11 @@ func newMaintenanceCmd(deps Dependencies) *cobra.Command {
 }
 
 type maintenanceConnectionOptions struct {
-	profile  string
-	insecure bool
+	profile string
 }
 
 func addMaintenanceConnectionFlags(cmd *cobra.Command, opts *maintenanceConnectionOptions) {
 	cmd.Flags().StringVar(&opts.profile, "profile", "default", "Profile name")
-	cmd.Flags().BoolVar(&opts.insecure, "insecure-skip-tls-verify", false, "Disable TLS certificate verification")
 }
 
 type maintenanceCreateOptions struct {
@@ -80,7 +78,7 @@ func runMaintenanceCreate(cmd *cobra.Command, deps Dependencies, opts maintenanc
 	if !end.After(start) {
 		return errors.New("--end must be after --start")
 	}
-	api, token, err := profileAPI(cmd, deps, opts.profile, opts.insecure, "manage maintenance")
+	api, token, err := profileAPI(cmd, deps, opts.profile, "manage maintenance")
 	if err != nil {
 		return err
 	}
@@ -310,7 +308,7 @@ func runMaintenanceList(cmd *cobra.Command, deps Dependencies, opts maintenanceL
 	if output != "table" && output != "json" {
 		return fmt.Errorf("unsupported --output %q; use table or json", opts.output)
 	}
-	api, token, err := profileAPI(cmd, deps, opts.profile, opts.insecure, "list maintenance")
+	api, token, err := profileAPI(cmd, deps, opts.profile, "list maintenance")
 	if err != nil {
 		return err
 	}
@@ -380,7 +378,7 @@ func runMaintenanceDelete(cmd *cobra.Command, deps Dependencies, opts maintenanc
 	if len(ids) == 0 {
 		return errors.New("at least one maintenance ID is required")
 	}
-	api, token, err := profileAPI(cmd, deps, opts.profile, opts.insecure, "manage maintenance")
+	api, token, err := profileAPI(cmd, deps, opts.profile, "manage maintenance")
 	if err != nil {
 		return err
 	}

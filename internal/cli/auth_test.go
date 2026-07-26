@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
@@ -89,6 +90,149 @@ func TestLoginStoresTokenAndRevokesPreviousToken(t *testing.T) {
 	}
 	if out.Len() == 0 || errOut.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", out.String(), errOut.String())
+	}
+}
+
+func TestLoginBootstrapsAndStoresTLSPin(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		result := any(true)
+		switch req.Method {
+		case "apiinfo.version":
+			result = "6.0.0"
+		case "user.login":
+			result = "session"
+		case "token.create":
+			result = map[string]any{"tokenids": []string{"new-token"}}
+		case "token.generate":
+			result = []map[string]string{{"tokenid": "new-token", "token": "new-secret"}}
+		case "user.logout":
+			result = true
+		default:
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "result": result, "id": 1})
+	}))
+	defer server.Close()
+
+	store := &profile.Store{Path: filepath.Join(t.TempDir(), "profiles.json"), Secrets: &memorySecrets{values: map[string]string{}}}
+	cmd := NewRootCmd(Dependencies{Store: store, Password: func(_ io.Writer) (string, error) { return "password", nil }})
+	cmd.SetArgs([]string{"auth", "login", "--url", server.URL, "--username", "Admin", "--insecure-skip-tls-verify"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Profiles["default"].TLSThumbprint; got == "" {
+		t.Fatal("TLS thumbprint was not stored")
+	}
+}
+
+func TestProfileAPIPinsLegacyTrustedProfile(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		result := any("6.0.0")
+		if req.Method == "item.get" {
+			result = []map[string]string{}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "result": result, "id": 1})
+	}))
+	defer server.Close()
+
+	originalTransport := http.DefaultTransport
+	transport := originalTransport.(*http.Transport).Clone()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	transport.TLSClientConfig.RootCAs = roots
+	http.DefaultTransport = transport
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+
+	store := &profile.Store{Path: filepath.Join(t.TempDir(), "profiles.json"), Secrets: &memorySecrets{values: map[string]string{"default": "token"}}}
+	if err := store.Save(profile.Config{Profiles: map[string]profile.Profile{"default": {URL: server.URL, TokenID: "1"}}}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := NewRootCmd(Dependencies{Store: store})
+	cmd.SetArgs([]string{"get", "item"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Profiles["default"].TLSThumbprint; got == "" {
+		t.Fatal("legacy profile was not pinned")
+	}
+}
+
+func TestLoginTLSOptionsRequiresExplicitPinReplacement(t *testing.T) {
+	store := &profile.Store{Path: filepath.Join(t.TempDir(), "profiles.json"), Secrets: &memorySecrets{values: map[string]string{}}}
+	pin := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := store.Save(profile.Config{Profiles: map[string]profile.Profile{"default": {TLSThumbprint: pin}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loginTLSOptions(store, "default", true, false); err == nil {
+		t.Fatal("insecure bootstrap unexpectedly bypassed an existing pin")
+	}
+	opts, err := loginTLSOptions(store, "default", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.InsecureSkipVerify || opts.Thumbprint != "" {
+		t.Fatalf("TLS options = %#v", opts)
+	}
+}
+
+func TestLoginTrustNewCertificateReplacesStoredPin(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		result := any(true)
+		switch req.Method {
+		case "apiinfo.version":
+			result = "6.0.0"
+		case "user.login":
+			result = "session"
+		case "token.create":
+			result = map[string]any{"tokenids": []string{"new-token"}}
+		case "token.generate":
+			result = []map[string]string{{"tokenid": "new-token", "token": "new-secret"}}
+		case "token.delete", "user.logout":
+			result = true
+		default:
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "result": result, "id": 1})
+	}))
+	defer server.Close()
+
+	oldPin := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	secrets := &memorySecrets{values: map[string]string{"default": "old-secret"}}
+	store := &profile.Store{Path: filepath.Join(t.TempDir(), "profiles.json"), Secrets: secrets}
+	if err := store.Save(profile.Config{Profiles: map[string]profile.Profile{"default": {URL: server.URL, TokenID: "old-token", TLSThumbprint: oldPin}}}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := NewRootCmd(Dependencies{Store: store, Password: func(_ io.Writer) (string, error) { return "password", nil }})
+	cmd.SetArgs([]string{"auth", "login", "--url", server.URL, "--username", "Admin", "--trust-new-certificate", "--insecure-skip-tls-verify"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Profiles["default"].TLSThumbprint; got == "" || got == oldPin {
+		t.Fatalf("TLS thumbprint = %q", got)
 	}
 }
 

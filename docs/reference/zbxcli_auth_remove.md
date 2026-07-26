@@ -14,9 +14,8 @@ zbxcli auth remove <profile> [flags]
 ### Options
 
 ```
-  -h, --help                       help for remove
-      --insecure-skip-tls-verify   Disable TLS certificate verification
-      --yes                        Skip the confirmation prompt
+  -h, --help   help for remove
+      --yes    Skip the confirmation prompt
 ```
 
 ### SEE ALSO
