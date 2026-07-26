@@ -274,3 +274,174 @@ func (c *Client) GetResource(ctx context.Context, token, resource string, query 
 	params["limit"] = query.Limit
 	return c.call(ctx, method, params, token)
 }
+
+// MaintenanceTarget identifies a host or host group assigned to maintenance.
+type MaintenanceTarget struct {
+	ID   string `json:"hostid,omitempty"`
+	Name string `json:"name"`
+	Host string `json:"host,omitempty"`
+}
+
+type MaintenanceGroup struct {
+	ID   string `json:"groupid"`
+	Name string `json:"name"`
+}
+
+// Maintenance is the subset of a Zabbix maintenance record shown by the CLI.
+type Maintenance struct {
+	ID              string              `json:"maintenanceid"`
+	Name            string              `json:"name"`
+	Description     string              `json:"description"`
+	MaintenanceType string              `json:"maintenance_type"`
+	ActiveSince     string              `json:"active_since"`
+	ActiveTill      string              `json:"active_till"`
+	Hosts           []MaintenanceTarget `json:"hosts"`
+	Groups          []MaintenanceGroup  `json:"groups"`
+}
+
+// MaintenanceCreate contains one one-time, data-collecting maintenance window.
+type MaintenanceCreate struct {
+	Name, Description string
+	Start, End        time.Time
+	HostIDs, GroupIDs []string
+}
+
+func (c *Client) FindHost(ctx context.Context, token, name string) ([]MaintenanceTarget, error) {
+	raw, err := c.call(ctx, "host.get", map[string]any{
+		"output":      []string{"hostid", "host", "name"},
+		"search":      map[string]string{"host": name, "name": name},
+		"searchByAny": true,
+	}, token)
+	if err != nil {
+		return nil, err
+	}
+	var records []MaintenanceTarget
+	if err := json.Unmarshal(raw, &records); err != nil {
+		return nil, fmt.Errorf("decode host lookup: %w", err)
+	}
+	matched := records[:0]
+	for _, record := range records {
+		if record.Host == name || record.Name == name {
+			matched = append(matched, record)
+		}
+	}
+	return matched, nil
+}
+
+func (c *Client) FindHostGroup(ctx context.Context, token, name string) ([]MaintenanceTarget, error) {
+	raw, err := c.call(ctx, "hostgroup.get", map[string]any{
+		"output": []string{"groupid", "name"},
+		"search": map[string]string{"name": name},
+	}, token)
+	if err != nil {
+		return nil, err
+	}
+	var wire []struct {
+		ID   string `json:"groupid"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, fmt.Errorf("decode host group lookup: %w", err)
+	}
+	matched := make([]MaintenanceTarget, 0, len(wire))
+	for _, record := range wire {
+		if record.Name == name {
+			matched = append(matched, MaintenanceTarget{ID: record.ID, Name: record.Name})
+		}
+	}
+	return matched, nil
+}
+
+func (c *Client) CreateMaintenance(ctx context.Context, token string, input MaintenanceCreate) (string, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return "", errors.New("maintenance name is required")
+	}
+	if !input.End.After(input.Start) {
+		return "", errors.New("maintenance end must be after its start")
+	}
+	if len(input.HostIDs) == 0 && len(input.GroupIDs) == 0 {
+		return "", errors.New("maintenance requires at least one host or host group")
+	}
+	period := int64(input.End.Sub(input.Start).Seconds())
+	params := map[string]any{
+		"name":             input.Name,
+		"description":      input.Description,
+		"active_since":     input.Start.Unix(),
+		"active_till":      input.End.Unix(),
+		"maintenance_type": 0,
+		"timeperiods": []map[string]any{{
+			"timeperiod_type": 0,
+			"start_date":      input.Start.Unix(),
+			"period":          period,
+		}},
+	}
+	if len(input.HostIDs) > 0 {
+		hosts := make([]map[string]string, 0, len(input.HostIDs))
+		for _, id := range input.HostIDs {
+			hosts = append(hosts, map[string]string{"hostid": id})
+		}
+		params["hosts"] = hosts
+	}
+	if len(input.GroupIDs) > 0 {
+		groups := make([]map[string]string, 0, len(input.GroupIDs))
+		for _, id := range input.GroupIDs {
+			groups = append(groups, map[string]string{"groupid": id})
+		}
+		params["groups"] = groups
+	}
+	raw, err := c.call(ctx, "maintenance.create", params, token)
+	if err != nil {
+		return "", err
+	}
+	var created struct {
+		IDs []string `json:"maintenanceids"`
+	}
+	if err := json.Unmarshal(raw, &created); err != nil {
+		return "", fmt.Errorf("decode maintenance creation: %w", err)
+	}
+	if len(created.IDs) != 1 || created.IDs[0] == "" {
+		return "", errors.New("Zabbix API returned no maintenance ID")
+	}
+	return created.IDs[0], nil
+}
+
+func (c *Client) ListMaintenances(ctx context.Context, token string, limit int) ([]Maintenance, error) {
+	raw, err := c.ListMaintenancesRaw(ctx, token, limit)
+	if err != nil {
+		return nil, err
+	}
+	var records []Maintenance
+	if err := json.Unmarshal(raw, &records); err != nil {
+		return nil, fmt.Errorf("decode maintenance list: %w", err)
+	}
+	return records, nil
+}
+
+// ListMaintenancesRaw retrieves complete maintenance records for JSON output.
+func (c *Client) ListMaintenancesRaw(ctx context.Context, token string, limit int) (json.RawMessage, error) {
+	if limit <= 0 {
+		return nil, errors.New("maintenance list limit must be positive")
+	}
+	raw, err := c.call(ctx, "maintenance.get", map[string]any{
+		"output":            "extend",
+		"selectHosts":       "extend",
+		"selectGroups":      "extend",
+		"selectTags":        "extend",
+		"selectTimeperiods": "extend",
+		"sortfield":         "name",
+		"sortorder":         "ASC",
+		"limit":             limit,
+	}, token)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func (c *Client) DeleteMaintenances(ctx context.Context, token string, ids []string) error {
+	if len(ids) == 0 {
+		return errors.New("at least one maintenance ID is required")
+	}
+	_, err := c.call(ctx, "maintenance.delete", ids, token)
+	return err
+}

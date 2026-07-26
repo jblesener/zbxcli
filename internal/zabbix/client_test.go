@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTokenWorkflowUsesVersionAppropriateAuthorization(t *testing.T) {
@@ -238,5 +239,66 @@ func TestGetResourceUsesVersionAppropriateAuthorization(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestMaintenanceClientUsesExpectedMethodsAndPayload(t *testing.T) {
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		methods = append(methods, request.Method)
+		if request.Method != "apiinfo.version" && r.Header.Get("Authorization") != "Bearer token" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		result := any(nil)
+		switch request.Method {
+		case "apiinfo.version":
+			result = "7.2.0"
+		case "maintenance.create":
+			var params map[string]any
+			if err := json.Unmarshal(request.Params, &params); err != nil {
+				t.Fatal(err)
+			}
+			if params["maintenance_type"] != float64(0) {
+				t.Fatalf("params = %#v", params)
+			}
+			result = map[string][]string{"maintenanceids": {"42"}}
+		case "maintenance.get":
+			result = []map[string]any{{"maintenanceid": "42", "name": "Window", "active_since": "1785546000", "active_till": "1785549600", "groups": []map[string]string{{"groupid": "7", "name": "Databases"}}}}
+		case "maintenance.delete":
+			result = []string{"42"}
+		default:
+			t.Fatalf("unexpected method %q", request.Method)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "result": result, "id": 1})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Discover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 8, 1, 1, 0, 0, 0, time.UTC)
+	if id, err := client.CreateMaintenance(context.Background(), "token", MaintenanceCreate{Name: "Window", Start: start, End: start.Add(time.Hour), HostIDs: []string{"10105"}}); err != nil || id != "42" {
+		t.Fatalf("create = %q, %v", id, err)
+	}
+	maintenances, err := client.ListMaintenances(context.Background(), "token", 10)
+	if err != nil || len(maintenances) != 1 || maintenances[0].Groups[0].ID != "7" {
+		t.Fatalf("list = %#v, %v", maintenances, err)
+	}
+	if err := client.DeleteMaintenances(context.Background(), "token", []string{"42"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(methods, ","); got != "apiinfo.version,maintenance.create,maintenance.get,maintenance.delete" {
+		t.Fatalf("methods = %s", got)
 	}
 }

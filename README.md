@@ -58,6 +58,42 @@ zbxcli get item --profile production --output json
 
 Pass model-specific Zabbix API parameters in `--params` as a JSON object. `zbxcli` always requests complete records and limits results to 100 by default; use `--limit` to change that. The `output` and `limit` API parameters are managed by the command and must not appear in `--params`. When using the host query shortcut, do not also set `search` or `searchByAny` in `--params`.
 
+## Manage maintenance windows
+
+Create a one-time maintenance window for exact host or host-group names. Data
+collection continues, while problems for the selected targets are suppressed.
+
+```sh
+zbxcli maintenance create \
+  --profile production \
+  --name 'Database upgrade' \
+  --start 2026-08-01T01:00:00+09:00 \
+  --end 2026-08-01T03:00:00+09:00 \
+  --host-group Databases
+```
+
+Timestamps may be RFC 3339 or local `YYYY-MM-DDTHH:MM` values. Local values
+use the machine timezone by default; pass `--timezone Asia/Tokyo` to make the
+zone explicit. Times must fall on whole minutes. Names are resolved exactly
+against a host's technical or visible name and a host group's name. A missing
+or ambiguous name is rejected; use repeatable `--host-id` or `--host-group-id`
+for script-safe targeting. Hosts and groups may be combined.
+
+Before creating or deleting a window, zbxcli prints a preview and asks for
+confirmation on an interactive terminal. Use `--yes` in scripts and CI:
+
+```sh
+zbxcli maintenance create --name 'Patch window' \
+  --start 2026-08-01T01:00:00Z --end 2026-08-01T02:00:00Z \
+  --host-id 10105 --yes
+zbxcli maintenance list --profile production
+zbxcli maintenance delete 42 --profile production --yes
+```
+
+Use `maintenance list --output json` for the API records. Managing maintenance
+requires a Zabbix Admin or Super admin token with permission to use the
+maintenance API.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).

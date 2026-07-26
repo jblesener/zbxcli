@@ -28,5 +28,6 @@ func NewRootCmd(deps Dependencies) *cobra.Command {
 	cmd.SetErr(os.Stderr)
 	cmd.AddCommand(newAuthCmd(deps))
 	cmd.AddCommand(newGetCmd(deps))
+	cmd.AddCommand(newMaintenanceCmd(deps))
 	return cmd
 }
