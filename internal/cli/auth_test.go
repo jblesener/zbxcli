@@ -84,6 +84,9 @@ func TestLoginStoresTokenAndRevokesPreviousToken(t *testing.T) {
 	if cfg.Profiles["default"].TokenID != "new-token" {
 		t.Fatalf("profile = %#v", cfg.Profiles["default"])
 	}
+	if cfg.Profiles["default"].Username != "Admin" {
+		t.Fatalf("profile username = %q", cfg.Profiles["default"].Username)
+	}
 	if out.Len() == 0 || errOut.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", out.String(), errOut.String())
 	}

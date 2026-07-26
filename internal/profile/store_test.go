@@ -40,3 +40,18 @@ func TestSaveCreatesPrivateAtomicConfig(t *testing.T) {
 		t.Fatalf("profile = %#v", cfg.Profiles["default"])
 	}
 }
+
+func TestLoadAcceptsProfilesWrittenBeforeUsernameWasStored(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profiles.json")
+	if err := os.WriteFile(path, []byte(`{"profiles":{"default":{"url":"https://zabbix.example","api_version":"6.0.0","token_id":"1"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := &Store{Path: path, Secrets: &testSecrets{values: map[string]string{}}}
+	cfg, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Profiles["default"].Username; got != "" {
+		t.Fatalf("username = %q, want empty", got)
+	}
+}

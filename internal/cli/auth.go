@@ -18,7 +18,7 @@ import (
 
 func newAuthCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{Use: "auth", Short: "Manage Zabbix authentication"}
-	cmd.AddCommand(newLoginCmd(deps), newTokenCmd(deps))
+	cmd.AddCommand(newLoginCmd(deps), newTokenCmd(deps), newProfileCmd(deps), newRotateCmd(deps), newRemoveCmd(deps))
 	return cmd
 }
 
@@ -83,6 +83,7 @@ func newLoginCmd(deps Dependencies) *cobra.Command {
 type loginOptions struct {
 	endpoint, username, profile, expiresIn, tokenName string
 	showToken, insecure                               bool
+	rotate                                            bool
 }
 
 func runLogin(cmd *cobra.Command, deps Dependencies, opts loginOptions) error {
@@ -148,7 +149,7 @@ func runLogin(cmd *cobra.Command, deps Dependencies, opts loginOptions) error {
 		return err
 	}
 	endpoint, _ := zabbix.NormalizeEndpoint(opts.endpoint)
-	previousTokenID, err := persistProfile(deps.Store, opts.profile, profile.Profile{URL: endpoint, APIVersion: version.Raw, TokenID: issued.ID, ExpiresAt: issued.ExpiresAt}, issued.Value)
+	previousTokenID, err := persistProfile(deps.Store, opts.profile, profile.Profile{URL: endpoint, Username: opts.username, APIVersion: version.Raw, TokenID: issued.ID, ExpiresAt: issued.ExpiresAt}, issued.Value)
 	if err != nil {
 		cleanupToken(cmd, api, session, issued.ID)
 		return err
@@ -161,7 +162,11 @@ func runLogin(cmd *cobra.Command, deps Dependencies, opts loginOptions) error {
 	if opts.showToken {
 		fmt.Fprintln(cmd.OutOrStdout(), issued.Value)
 	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "Authenticated profile %q against Zabbix API %s.\n", opts.profile, version.Raw)
+		verb := "Authenticated"
+		if opts.rotate {
+			verb = "Rotated credentials for"
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%s profile %q against Zabbix API %s.\n", verb, opts.profile, version.Raw)
 	}
 	return nil
 }

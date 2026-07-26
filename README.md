@@ -32,6 +32,44 @@ zbxcli auth token show --profile production
 
 This command writes only the token and a trailing newline to standard output. Treat its output as a secret.
 
+## Manage profiles
+
+Inspect saved connection metadata and token expiry without reading token values
+from the operating-system credential manager:
+
+```sh
+zbxcli auth profile list
+zbxcli auth profile list --output json
+```
+
+The list is sorted by profile name and marks tokens as `active`, `expired`, or
+`never`. JSON output contains profile metadata, including the token ID, but
+never the token value.
+
+Rotate a profile's API token without changing its endpoint. zbxcli creates and
+stores the new token before revoking the old one:
+
+```sh
+zbxcli auth rotate --profile production --expires-in 90d
+```
+
+The username saved by `auth login` is used by default. Profiles created by older
+zbxcli versions prompt for a username; pass `--username` when rotating in a
+non-interactive environment. `--show-token` has the same secret-handling
+implications as it does for `auth login`.
+
+To permanently retire a profile, revoke its saved token on Zabbix and remove
+the local metadata and keychain entry. The command previews the target and
+requires confirmation; use `--yes` in automation:
+
+```sh
+zbxcli auth remove production
+zbxcli auth remove production --yes
+```
+
+If remote revocation fails, zbxcli leaves the local profile and token in place
+so the operation can be retried.
+
 Zabbix 6.0 and newer are supported. TLS certificates are verified by default; `--insecure-skip-tls-verify` is available only for deliberate testing or private deployments.
 
 ## Query data-collection resources

@@ -87,6 +87,56 @@ func TestTokenWorkflowUsesVersionAppropriateAuthorization(t *testing.T) {
 	}
 }
 
+func TestDeleteTokenUsesVersionAppropriateAuthorization(t *testing.T) {
+	for _, tc := range []struct {
+		name, version string
+		bearer        bool
+	}{
+		{name: "6.0 auth property", version: "6.0.0"},
+		{name: "7.2 bearer header", version: "7.2.0", bearer: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					Method string  `json:"method"`
+					Auth   *string `json:"auth"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Method != "token.delete" {
+					t.Fatalf("method = %q", request.Method)
+				}
+				if tc.bearer {
+					if got := r.Header.Get("Authorization"); got != "Bearer token" {
+						t.Fatalf("Authorization = %q", got)
+					}
+					if request.Auth != nil {
+						t.Fatalf("unexpected auth property: %q", *request.Auth)
+					}
+				} else if request.Auth == nil || *request.Auth != "token" {
+					t.Fatalf("auth = %#v", request.Auth)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "result": map[string][]string{"tokenids": {"42"}}, "id": 1})
+			}))
+			defer server.Close()
+
+			client, err := New(server.URL, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			version, err := ParseVersion(tc.version)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.version = version
+			if err := client.DeleteToken(context.Background(), "token", "42"); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestNormalizeEndpoint(t *testing.T) {
 	for _, tc := range []struct{ input, want string }{
 		{"https://zabbix.example", "https://zabbix.example/api_jsonrpc.php"},

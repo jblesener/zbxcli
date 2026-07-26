@@ -17,6 +17,7 @@ const keyringService = "zbxcli"
 
 type Profile struct {
 	URL        string     `json:"url"`
+	Username   string     `json:"username,omitempty"`
 	APIVersion string     `json:"api_version"`
 	TokenID    string     `json:"token_id"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
