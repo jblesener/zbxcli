@@ -2,6 +2,8 @@
 
 `zbxcli` is a command-line client for Zabbix. Its first feature creates and securely stores an API token for a Zabbix user.
 
+Full installation, workflow, and command-reference documentation is available at [jblesener.github.io/zbxcli](https://jblesener.github.io/zbxcli/).
+
 ## Development
 
 Commits follow the [Conventional Commits](https://www.conventionalcommits.org/) format. Install the Node development tools with `npm install` to enable the local commit-message hook. For example, use `feat: add host search` for a feature or `fix: handle expired tokens` for a bug fix.

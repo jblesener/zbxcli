@@ -31,3 +31,12 @@ func NewRootCmd(deps Dependencies) *cobra.Command {
 	cmd.AddCommand(newMaintenanceCmd(deps))
 	return cmd
 }
+
+// NewDocumentationRootCmd returns the command tree without initializing
+// user configuration, keyrings, or network clients. It is intended solely
+// for generating static command-reference documentation.
+func NewDocumentationRootCmd() *cobra.Command {
+	cmd := NewRootCmd(Dependencies{})
+	cmd.DisableAutoGenTag = true
+	return cmd
+}

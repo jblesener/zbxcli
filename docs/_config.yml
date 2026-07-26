@@ -1,0 +1,12 @@
+title: zbxcli documentation
+description: A safe command-line client for Zabbix.
+url: "https://jblesener.github.io"
+baseurl: "/zbxcli"
+repository: "https://github.com/jblesener/zbxcli"
+product: zbxcli
+accent: "#d94f36"
+markdown: kramdown
+kramdown:
+  input: GFM
+exclude:
+  - reference/.gitkeep
